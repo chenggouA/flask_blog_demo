@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>个人博客示例</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    #loginSection, #registerSection, #postSection { margin-bottom: 20px; }
+    #registerSection, #postSection { display: none; }  /* 初始隐藏注册表单和发帖区 */
+    .post { border-bottom: 1px solid #ccc; padding: 10px 0; }
+    .post h3 { margin: 0; }
+    .post .meta { color: gray; font-size: 0.9em; }
+    button { margin-right: 5px; }
+  </style>
+</head>
+<body>
+  <h1>个人博客 Demo</h1>
+  
+  <!-- 登录表单 -->
+  <div id="loginSection">
+    <h2>登录</h2>
+    用户名: <input type="text" id="loginUsername"><br/>
+    密码: <input type="password" id="loginPassword"><br/>
+    <button id="loginBtn">登录</button>
+    <button id="showRegisterBtn">没有账号？注册</button>
+  </div>
+  
+  <!-- 注册表单 -->
+  <div id="registerSection">
+    <h2>注册</h2>
+    用户名: <input type="text" id="registerUsername"><br/>
+    密码: <input type="password" id="registerPassword"><br/>
+    <button id="registerBtn">注册</button>
+    <button id="cancelRegisterBtn">取消</button>
+  </div>
+  
+  <!-- 发帖和注销区域（登录后可见） -->
+  <div id="postSection">
+    <div>
+      <span id="welcomeMsg"></span>
+      <button id="logoutBtn">退出登录</button>
+    </div>
+    <h2>发表新文章</h2>
+    标题: <input type="text" id="postTitle"><br/>
+    内容:<br/>
+    <textarea id="postContent" rows="4" cols="50"></textarea><br/>
+    <button id="publishBtn">发布文章</button>
+  </div>
+  
+  <!-- 文章列表 -->
+  <h2>文章列表</h2>
+  <div id="postsList"><!-- 动态加载文章 --></div>
+  
+<script>
+  const API_BASE = '/api';
+  let currentUser = { username: null, token: null };
+  
+  // 获取页面元素
+  const loginSection = document.getElementById('loginSection');
+  const registerSection = document.getElementById('registerSection');
+  const postSection = document.getElementById('postSection');
+  const loginUsername = document.getElementById('loginUsername');
+  const loginPassword = document.getElementById('loginPassword');
+  const loginBtn = document.getElementById('loginBtn');
+  const showRegisterBtn = document.getElementById('showRegisterBtn');
+  const registerUsername = document.getElementById('registerUsername');
+  const registerPassword = document.getElementById('registerPassword');
+  const registerBtn = document.getElementById('registerBtn');
+  const cancelRegisterBtn = document.getElementById('cancelRegisterBtn');
+  const welcomeMsg = document.getElementById('welcomeMsg');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const postTitle = document.getElementById('postTitle');
+  const postContent = document.getElementById('postContent');
+  const publishBtn = document.getElementById('publishBtn');
+  const postsList = document.getElementById('postsList');
+  
+  // 页面加载时检查本地存储的Token，保持登录状态
+  if (localStorage.getItem('token')) {
+    currentUser.token = localStorage.getItem('token');
+    currentUser.username = localStorage.getItem('username');
+    updateUIForLogin();
+  }
+  
+  // 显示注册表单
+  showRegisterBtn.onclick = () => {
+    loginSection.style.display = 'none';
+    registerSection.style.display = 'block';
+  };
+  // 取消注册，返回登录
+  cancelRegisterBtn.onclick = () => {
+    registerSection.style.display = 'none';
+    loginSection.style.display = 'block';
+  };
+  
+  // 登录请求
+  loginBtn.onclick = () => {
+    const username = loginUsername.value;
+    const password = loginPassword.value;
+    if (!username || !password) {
+      alert('请输入用户名和密码');
+      return;
+    }
+    fetch(`${API_BASE}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    })
+    .then(res => res.json().then(data => ({ status: res.status, body: data })))
+    .then(result => {
+      if (result.status === 200) {
+        // 登录成功
+        currentUser.token = result.body.token;
+        currentUser.username = result.body.username;
+        localStorage.setItem('token', currentUser.token);
+        localStorage.setItem('username', currentUser.username);
+        updateUIForLogin();
+        fetchPosts();  // 刷新文章列表（以显示编辑/删除按钮）
+      } else {
+        alert(result.body.message || '登录失败');
+      }
+    })
+    .catch(err => console.error('Login error:', err));
+  };
+  
+  // 注册请求
+  registerBtn.onclick = () => {
+    const username = registerUsername.value;
+    const password = registerPassword.value;
+    if (!username || !password) {
+      alert('请输入用户名和密码');
+      return;
+    }
+    fetch(`${API_BASE}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    })
+    .then(res => res.json().then(data => ({ status: res.status, body: data })))
+    .then(result => {
+      if (result.status === 201) {
+        alert('注册成功，请登录');
+        // 切换回登录界面并填充用户名
+        registerSection.style.display = 'none';
+        loginSection.style.display = 'block';
+        loginUsername.value = username;
+        loginPassword.value = '';
+      } else {
+        alert(result.body.message || '注册失败');
+      }
+    })
+    .catch(err => console.error('Register error:', err));
+  };
+  
+  // 退出登录
+  logoutBtn.onclick = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('username');
+    currentUser.token = null;
+    currentUser.username = null;
+    updateUIForLogout();
+    fetchPosts();  // 刷新列表，去除编辑/删除按钮
+  };
+  
+  // 发布新文章
+  publishBtn.onclick = () => {
+    const title = postTitle.value;
+    const content = postContent.value;
+    if (!title || !content) {
+      alert('请填写标题和内容');
+      return;
+    }
+    fetch(`${API_BASE}/posts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + currentUser.token
+      },
+      body: JSON.stringify({ title, content })
+    })
+    .then(res => res.json().then(data => ({ status: res.status, body: data })))
+    .then(result => {
+      if (result.status === 201) {
+        alert('文章发布成功');
+        postTitle.value = '';
+        postContent.value = '';
+        fetchPosts();
+      } else {
+        alert(result.body.message || '发布失败');
+      }
+    })
+    .catch(err => console.error('Publish error:', err));
+  };
+  
+  // 更新UI为登录状态
+  function updateUIForLogin() {
+    loginSection.style.display = 'none';
+    registerSection.style.display = 'none';
+    postSection.style.display = 'block';
+    welcomeMsg.textContent = `欢迎, ${currentUser.username}!`;
+  }
+  // 更新UI为登出状态
+  function updateUIForLogout() {
+    loginSection.style.display = 'block';
+    registerSection.style.display = 'none';
+    postSection.style.display = 'none';
+    welcomeMsg.textContent = '';
+  }
+  
+  // 获取文章列表
+  function fetchPosts() {
+    fetch(`${API_BASE}/posts`)
+      .then(res => res.json())
+      .then(data => {
+        renderPosts(data);
+      })
+      .catch(err => console.error('Fetch posts error:', err));
+  }
+  
+  // 渲染文章列表
+  function renderPosts(posts) {
+    postsList.innerHTML = '';
+    if (!posts || posts.length === 0) {
+      postsList.innerHTML = '<p>没有文章。</p>';
+      return;
+    }
+    for (let post of posts) {
+      const postDiv = document.createElement('div');
+      postDiv.className = 'post';
+      const titleEl = document.createElement('h3');
+      titleEl.textContent = post.title;
+      postDiv.appendChild(titleEl);
+      const metaEl = document.createElement('div');
+      metaEl.className = 'meta';
+      metaEl.textContent = `作者: ${post.author} | 发布于: ${post.created_at}`;
+      postDiv.appendChild(metaEl);
+      const contentEl = document.createElement('p');
+      contentEl.textContent = post.content;
+      postDiv.appendChild(contentEl);
+      // 如果当前用户是文章作者，显示编辑/删除按钮
+      if (currentUser.token && currentUser.username === post.author) {
+        const editBtn = document.createElement('button');
+        editBtn.textContent = '编辑';
+        editBtn.onclick = () => { editPost(post.id, post.title, post.content); };
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = '删除';
+        deleteBtn.onclick = () => { deletePost(post.id); };
+        postDiv.appendChild(editBtn);
+        postDiv.appendChild(deleteBtn);
+      }
+      postsList.appendChild(postDiv);
+    }
+  }
+  
+  // 编辑文章（弹出对话框输入新内容）
+  function editPost(postId, currentTitle, currentContent) {
+    const newTitle = prompt('编辑标题:', currentTitle);
+    if (newTitle === null) return;  // 用户取消编辑
+    const newContent = prompt('编辑内容:', currentContent);
+    if (newContent === null) return;
+    fetch(`${API_BASE}/posts/${postId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + currentUser.token
+      },
+      body: JSON.stringify({ title: newTitle, content: newContent })
+    })
+    .then(res => res.json().then(data => ({ status: res.status, body: data })))
+    .then(result => {
+      if (result.status === 200) {
+        fetchPosts();
+      } else {
+        alert(result.body.message || '更新失败');
+      }
+    })
+    .catch(err => console.error('Edit post error:', err));
+  }
+  
+  // 删除文章
+  function deletePost(postId) {
+    if (!confirm('确定删除这篇文章吗？')) return;
+    fetch(`${API_BASE}/posts/${postId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + currentUser.token }
+    })
+    .then(res => res.json().then(data => ({ status: res.status, body: data })))
+    .then(result => {
+      if (result.status === 200) {
+        fetchPosts();
+      } else {
+        alert(result.body.message || '删除失败');
+      }
+    })
+    .catch(err => console.error('Delete post error:', err));
+  }
+  
+  // 页面加载完成后，获取文章列表
+  fetchPosts();
+</script>
+</body>
+</html>
